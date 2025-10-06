@@ -1,0 +1,994 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Orbital Harvest Heroes</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #1a1a1a;
+            font-family: Arial, sans-serif;
+            overflow: hidden;
+        }
+        
+        #game-container {
+            position: relative;
+            width: 800px;
+            height: 600px;
+            background-color: #000;
+            overflow: hidden;
+        }
+        
+        #game-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+        
+        #start-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.8);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            z-index: 10;
+        }
+        
+        #start-screen h1 {
+            font-size: 36px;
+            color: #4CAF50;
+            margin-bottom: 20px;
+            text-shadow: 0 0 10px rgba(76, 175, 80, 0.5);
+        }
+        
+        #start-screen p {
+            font-size: 18px;
+            max-width: 600px;
+            text-align: center;
+            margin-bottom: 10px;
+            line-height: 1.5;
+        }
+        
+        #start-screen button {
+            background-color: #4CAF50;
+            border: none;
+            color: white;
+            padding: 15px 32px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            margin: 20px 0;
+            cursor: pointer;
+            border-radius: 5px;
+            transition: background-color 0.3s;
+        }
+        
+        #start-screen button:hover {
+            background-color: #45a049;
+        }
+        
+        #water-bar-container {
+            position: absolute;
+            top: 20px; /* Raised from bottom to top */
+            left: 10px;
+            width: 200px;
+            height: 20px;
+            background-color: rgba(0, 0, 0, 0.5);
+            border: 2px solid #fff;
+            border-radius: 10px;
+            z-index: 5;
+        }
+        
+        #water-bar {
+            height: 100%;
+            width: 100%;
+            background: linear-gradient(to right, #0077ff, #00c3ff);
+            border-radius: 8px;
+            transition: width 0.3s;
+        }
+        
+        #water-label {
+            position: absolute;
+            top: 0px; /* Position above the water bar */
+            left: 10px;
+            color: white;
+            font-size: 14px;
+            z-index: 5;
+        }
+        
+        #debug-info {
+            position: absolute;
+            bottom: 40px;
+            left: 10px;
+            color: yellow;
+            font-size: 12px;
+            z-index: 5;
+            display: none;
+        }
+        
+        .alert {
+            position: absolute;
+            top: 50px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            z-index: 5;
+            opacity: 0;
+            transition: opacity 0.5s;
+            text-align: center;
+            max-width: 80%;
+        }
+        
+        .alert.show {
+            opacity: 1;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="game-canvas" width="800" height="600"></canvas>
+        
+        <div id="water-label">Water Supply:</div>
+        <div id="water-bar-container">
+            <div id="water-bar"></div>
+        </div>
+        
+        <div id="debug-info"></div>
+        
+        <div class="alert" id="alert-box"></div>
+        
+        <div id="start-screen">
+            <h1>Orbital Harvest Heroes</h1>
+            <p>Control your drone to water crops and protect them from feral hogs.</p>
+            <p>Use arrow keys to move and space bar to water crops or neutralize hogs.</p>
+            <p>Visit trees to refill your water supply when it runs low.</p>
+            <p>Your goal is to water all highlighted crop areas to 100%.</p>
+            <button id="start-button">Start Game</button>
+            <p><small>Press 'D' to toggle debug info | Press 'R' to restart after winning</small></p>
+        </div>
+    </div>
+
+    <script>
+        // Game variables
+        const canvas = document.getElementById('game-canvas');
+        const ctx = canvas.getContext('2d');
+        const startScreen = document.getElementById('start-screen');
+        const startButton = document.getElementById('start-button');
+        const waterBar = document.getElementById('water-bar');
+        const debugInfo = document.getElementById('debug-info');
+        const alertBox = document.getElementById('alert-box');
+        
+        // Game state
+        let gameRunning = false;
+        let score = 0;
+        let cropsWatered = 0;
+        let debugMode = false;
+        
+        // Game objects
+        let player;
+        let crops = [];
+        let hogs = [];
+        let trees = [];
+        let tiles = [];
+        let alertTimer = 0;
+        let waterLevel = 100;
+        
+        // Constants
+        const PLAYER_SIZE = 20;
+        const PLAYER_SPEED = 4;
+        const CROP_COUNT = 5;
+        const HOG_COUNT_MIN = 5;
+        const HOG_COUNT_MAX = 10;
+        const TREE_COUNT = 3;
+        const TILE_SIZE = 40;
+        const WATER_DEPLETION_RATE = 0.5;
+        const WATER_REFILL_RATE = 2;
+        const HOG_WANDER_TIME = 180; // 3 seconds at 60fps
+        const HOG_DAMAGE_RATE = 0.167; // 10 per second at 60fps
+        const MAX_CROP_PLACEMENT_ATTEMPTS = 50; // Maximum attempts to place a crop
+        
+        // Create farm tile colors
+        const farmColors = [
+            '#1e6b1e', // Dark green
+            '#2d8a2d', // Medium green
+            '#3ca63c', // Light green
+            '#5cb85c', // Pale green
+            '#8fbc8f', // Dark sea green
+            '#a9d3a9', // Light sea green
+            '#d2e8d2', // Very light green
+            '#f0fff0', // Honeydew
+            '#daa520', // Goldenrod (for harvested fields)
+            '#d2b48c'  // Tan (for dry fields)
+        ];
+        
+        // Initialize game
+        function init() {
+            // Create player
+            player = {
+                x: canvas.width / 2,
+                y: canvas.height / 2,
+                size: PLAYER_SIZE,
+                speed: PLAYER_SPEED,
+                color: '#00AAFF'
+            };
+            
+            // Create tiles
+            createTiles();
+            
+            // Create crops
+            createCrops();
+            
+            // Create trees
+            createTrees();
+            
+            // Create hogs
+            createHogs();
+            
+            // Reset game state
+            cropsWatered = 0;
+            waterLevel = 100;
+            
+            // Start game loop
+            gameRunning = true;
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Create background tiles
+        function createTiles() {
+            tiles = [];
+            const tilesX = Math.ceil(canvas.width / TILE_SIZE);
+            const tilesY = Math.ceil(canvas.height / TILE_SIZE);
+            
+            for (let y = 0; y < tilesY; y++) {
+                for (let x = 0; x < tilesX; x++) {
+                    tiles.push({
+                        x: x * TILE_SIZE,
+                        y: y * TILE_SIZE,
+                        width: TILE_SIZE,
+                        height: TILE_SIZE,
+                        type: Math.random() > 0.9 ? 'path' : 'field',
+                        color: farmColors[Math.floor(Math.random() * farmColors.length)]
+                    });
+                }
+            }
+        }
+        
+        // Create crop areas with improved placement algorithm
+        function createCrops() {
+            crops = [];
+            cropsWatered = 0;
+            
+            // Create crops in random positions with better collision detection
+            for (let i = 0; i < CROP_COUNT; i++) {
+                const size = 30 + Math.random() * 50; // Random size between 30 and 80
+                
+                // Ensure crops are fully visible on screen by adjusting spawn boundaries
+                const margin = size + 20; // Increased margin to ensure crop and its UI elements are visible
+                
+                let placed = false;
+                let attempts = 0;
+                
+                // Try to place the crop without overlapping
+                while (!placed && attempts < MAX_CROP_PLACEMENT_ATTEMPTS) {
+                    attempts++;
+                    
+                    const x = margin + Math.random() * (canvas.width - 2 * margin);
+                    const y = margin + Math.random() * (canvas.height - 2 * margin);
+                    
+                    // Check if this position overlaps with any existing crop
+                    let overlapping = false;
+                    for (let j = 0; j < crops.length; j++) {
+                        const other = crops[j];
+                        const dx = other.x - x;
+                        const dy = other.y - y;
+                        const distance = Math.sqrt(dx * dx + dy * dy);
+                        const minDistance = size + other.size + 20; // Added extra spacing between crops
+                        
+                        if (distance < minDistance) {
+                            overlapping = true;
+                            break;
+                        }
+                    }
+                    
+                    if (!overlapping) {
+                        crops.push({
+                            x: x,
+                            y: y,
+                            size: size,
+                            irrigation: 0,
+                            isWatered: false,
+                            underAttack: false,
+                            pattern: Math.floor(Math.random() * 3) // 0, 1, or 2 for different patterns
+                        });
+                        placed = true;
+                    }
+                }
+                
+                // If we couldn't place the crop after many attempts, reduce its size and try again
+                if (!placed) {
+                    i--; // Try again with a smaller crop
+                }
+            }
+        }
+        
+        // Create trees for water refill
+        function createTrees() {
+            trees = [];
+            
+            for (let i = 0; i < TREE_COUNT; i++) {
+                const size = 30;
+                const x = Math.random() * (canvas.width - size * 2);
+                const y = Math.random() * (canvas.height - size * 2);
+                
+                // Make sure trees don't overlap with crops
+                let overlapping = false;
+                for (let j = 0; j < crops.length; j++) {
+                    const crop = crops[j];
+                    const dx = crop.x - x;
+                    const dy = crop.y - y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+                    if (distance < size + crop.size) {
+                        overlapping = true;
+                        break;
+                    }
+                }
+                
+                if (!overlapping) {
+                    trees.push({
+                        x: x,
+                        y: y,
+                        size: size
+                    });
+                } else {
+                    i--; // Try again
+                }
+            }
+        }
+        
+        // Create hogs
+        function createHogs() {
+            hogs = [];
+            
+            // Random number of hogs between 5 and 10
+            const hogCount = HOG_COUNT_MIN + Math.floor(Math.random() * (HOG_COUNT_MAX - HOG_COUNT_MIN + 1));
+            
+            for (let i = 0; i < hogCount; i++) {
+                const size = 25;
+                let x, y;
+                
+                // Spawn hogs at the edges
+                const edge = Math.floor(Math.random() * 4);
+                switch (edge) {
+                    case 0: // Top
+                        x = Math.random() * canvas.width;
+                        y = -size;
+                        break;
+                    case 1: // Right
+                        x = canvas.width + size;
+                        y = Math.random() * canvas.height;
+                        break;
+                    case 2: // Bottom
+                        x = Math.random() * canvas.width;
+                        y = canvas.height + size;
+                        break;
+                    case 3: // Left
+                        x = -size;
+                        y = Math.random() * canvas.height;
+                        break;
+                }
+                
+                hogs.push({
+                    x: x,
+                    y: y,
+                    size: size,
+                    speed: 1 + Math.random() * 0.5,
+                    wanderTime: HOG_WANDER_TIME,
+                    wanderCounter: 0,
+                    wanderAngle: Math.random() * Math.PI * 2,
+                    targetCrop: null,
+                    state: 'wander' // 'wander' or 'attack'
+                });
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            if (!gameRunning) return;
+            
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw background
+            drawBackground();
+            
+            // Update and draw trees
+            updateAndDrawTrees();
+            
+            // Update and draw crops
+            updateAndDrawCrops();
+            
+            // Update and draw hogs
+            updateAndDrawHogs();
+            
+            // Update and draw player
+            updateAndDrawPlayer();
+            
+            // Check win condition
+            checkWinCondition();
+            
+            // Update water bar
+            updateWaterBar();
+            
+            // Update debug info
+            if (debugMode) {
+                updateDebugInfo();
+            }
+            
+            // Update alert
+            updateAlert();
+            
+            // Continue game loop
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Draw background
+        function drawBackground() {
+            // Draw tiles
+            for (let i = 0; i < tiles.length; i++) {
+                const tile = tiles[i];
+                ctx.fillStyle = tile.color;
+                ctx.fillRect(tile.x, tile.y, tile.width, tile.height);
+                
+                if (tile.type === 'path') {
+                    ctx.fillStyle = '#a67c52';
+                    ctx.fillRect(tile.x + 5, tile.y + 5, tile.width - 10, tile.height - 10);
+                }
+            }
+        }
+        
+        // Update and draw trees
+        function updateAndDrawTrees() {
+            for (let i = 0; i < trees.length; i++) {
+                const tree = trees[i];
+                
+                // Draw tree
+                ctx.fillStyle = '#006400';
+                ctx.beginPath();
+                ctx.arc(tree.x, tree.y, tree.size, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Draw trunk
+                ctx.fillStyle = '#8B4513';
+                ctx.fillRect(tree.x - 5, tree.y, 10, tree.size);
+                
+                // Draw leaves
+                ctx.fillStyle = '#228B22';
+                ctx.beginPath();
+                ctx.arc(tree.x, tree.y - tree.size/3, tree.size * 0.8, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Check if player is near tree for water refill
+                const dx = player.x - tree.x;
+                const dy = player.y - tree.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                if (distance < player.size + tree.size) {
+                    waterLevel = Math.min(waterLevel + WATER_REFILL_RATE, 100);
+                    if (waterLevel === 100) {
+                        showAlert('Water tank fully refilled!');
+                    }
+                }
+            }
+        }
+        
+        // Update and draw crops
+        function updateAndDrawCrops() {
+            for (let i = 0; i < crops.length; i++) {
+                const crop = crops[i];
+                
+                // FIXED: No more natural evaporation - crops only lose water from hog attacks
+                // Only hogs can reduce irrigation now
+                
+                // Clamp irrigation level
+                crop.irrigation = Math.max(0, Math.min(100, crop.irrigation));
+                
+                // Update watered status
+                const wasWatered = crop.isWatered;
+                crop.isWatered = crop.irrigation >= 100;
+                
+                if (crop.isWatered && !wasWatered) {
+                    cropsWatered++;
+                    showAlert('Crop fully watered!');
+                } else if (!crop.isWatered && wasWatered) {
+                    // If a crop was watered but now isn't (due to hog damage)
+                    cropsWatered--;
+                }
+                
+                // Draw crop area
+                ctx.beginPath();
+                ctx.arc(crop.x, crop.y, crop.size, 0, Math.PI * 2);
+                
+                // Base color with blue tint based on irrigation level
+                const blueIntensity = Math.min(crop.irrigation / 100, 1);
+                const blueColor = `rgba(0, 100, 255, ${blueIntensity * 0.4})`;
+                const baseColor = 'rgba(0, 150, 0, 0.3)'; // Default green
+                
+                // Fill with gradient
+                const gradient = ctx.createRadialGradient(
+                    crop.x, crop.y, 0,
+                    crop.x, crop.y, crop.size
+                );
+                gradient.addColorStop(0, blueColor);
+                gradient.addColorStop(1, baseColor);
+                
+                ctx.fillStyle = gradient;
+                ctx.fill();
+                
+                // Draw crop pattern
+                ctx.save();
+                ctx.clip(); // Clip to the crop circle
+                
+                // Different patterns based on crop.pattern value
+                switch (crop.pattern) {
+                    case 0: // Grid pattern
+                        ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+                        ctx.lineWidth = 2;
+                        const gridSize = 10;
+                        for (let x = crop.x - crop.size; x <= crop.x + crop.size; x += gridSize) {
+                            ctx.beginPath();
+                            ctx.moveTo(x, crop.y - crop.size);
+                            ctx.lineTo(x, crop.y + crop.size);
+                            ctx.stroke();
+                        }
+                        for (let y = crop.y - crop.size; y <= crop.y + crop.size; y += gridSize) {
+                            ctx.beginPath();
+                            ctx.moveTo(crop.x - crop.size, y);
+                            ctx.lineTo(crop.x + crop.size, y);
+                            ctx.stroke();
+                        }
+                        break;
+                    case 1: // Concentric circles
+                        ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+                        ctx.lineWidth = 2;
+                        for (let r = crop.size / 4; r <= crop.size; r += crop.size / 4) {
+                            ctx.beginPath();
+                            ctx.arc(crop.x, crop.y, r, 0, Math.PI * 2);
+                            ctx.stroke();
+                        }
+                        break;
+                    case 2: // Radial lines
+                        ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+                        ctx.lineWidth = 2;
+                        const lineCount = 8;
+                        for (let i = 0; i < lineCount; i++) {
+                            const angle = (i / lineCount) * Math.PI * 2;
+                            ctx.beginPath();
+                            ctx.moveTo(crop.x, crop.y);
+                            ctx.lineTo(
+                                crop.x + Math.cos(angle) * crop.size,
+                                crop.y + Math.sin(angle) * crop.size
+                            );
+                            ctx.stroke();
+                        }
+                        break;
+                }
+                
+                ctx.restore();
+                
+                // Draw border
+                if (crop.isWatered) {
+                    // Gold border for fully watered crops
+                    ctx.strokeStyle = '#FFD700';
+                    ctx.lineWidth = 3;
+                } else if (crop.underAttack) {
+                    // Red border for crops under attack
+                    ctx.strokeStyle = '#FF0000';
+                    ctx.lineWidth = 3;
+                } else {
+                    // Normal border
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+                    ctx.lineWidth = 2;
+                }
+                
+                ctx.stroke();
+                
+                // Draw irrigation level indicator
+                const barWidth = crop.size * 1.5;
+                const barHeight = 5;
+                const barX = crop.x - barWidth / 2;
+                const barY = crop.y + crop.size + 5;
+                
+                // Background
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+                ctx.fillRect(barX, barY, barWidth, barHeight);
+                
+                // Fill
+                ctx.fillStyle = `rgba(0, 100, 255, 0.8)`;
+                ctx.fillRect(barX, barY, barWidth * (crop.irrigation / 100), barHeight);
+                
+                // Border
+                ctx.strokeStyle = 'white';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(barX, barY, barWidth, barHeight);
+            }
+        }
+        
+        // Update and draw hogs
+        function updateAndDrawHogs() {
+            for (let i = 0; i < hogs.length; i++) {
+                const hog = hogs[i];
+                
+                // Update hog behavior
+                if (hog.state === 'wander') {
+                    // Wander behavior
+                    hog.wanderCounter++;
+                    
+                    // Change wander direction occasionally
+                    if (hog.wanderCounter % 60 === 0) {
+                        hog.wanderAngle = Math.random() * Math.PI * 2;
+                    }
+                    
+                    // Move in wander direction
+                    hog.x += Math.cos(hog.wanderAngle) * hog.speed;
+                    hog.y += Math.sin(hog.wanderAngle) * hog.speed;
+                    
+                    // Keep hogs on screen during wandering
+                    if (hog.x < 0) hog.x = 0;
+                    if (hog.x > canvas.width) hog.x = canvas.width;
+                    if (hog.y < 0) hog.y = 0;
+                    if (hog.y > canvas.height) hog.y = canvas.height;
+                    
+                    // Switch to attack mode after wander time
+                    if (hog.wanderCounter >= hog.wanderTime) {
+                        hog.state = 'attack';
+                        hog.targetCrop = findClosestCrop(hog);
+                    }
+                } else if (hog.state === 'attack') {
+                    // Attack behavior
+                    if (!hog.targetCrop) {
+                        hog.targetCrop = findClosestCrop(hog);
+                        if (!hog.targetCrop) {
+                            // No crops to attack, go back to wandering
+                            hog.state = 'wander';
+                            hog.wanderCounter = 0;
+                            continue;
+                        }
+                    }
+                    
+                    // Move towards target crop
+                    const dx = hog.targetCrop.x - hog.x;
+                    const dy = hog.targetCrop.y - hog.y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+                    
+                    if (distance > hog.size + hog.targetCrop.size) {
+                        // Move towards crop
+                        hog.x += (dx / distance) * hog.speed;
+                        hog.y += (dy / distance) * hog.speed;
+                    } else {
+                        // Attack crop - increased damage to 10 per second
+                        hog.targetCrop.irrigation -= HOG_DAMAGE_RATE * 60;
+                        hog.targetCrop.underAttack = true;
+                        
+                        // If crop is depleted, find a new target
+                        if (hog.targetCrop.irrigation <= 0) {
+                            hog.targetCrop = findClosestCrop(hog);
+                        }
+                    }
+                }
+                
+                // Draw hog
+                ctx.fillStyle = '#8B4513';
+                ctx.beginPath();
+                ctx.arc(hog.x, hog.y, hog.size, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Add eyes
+                ctx.fillStyle = 'black';
+                ctx.beginPath();
+                ctx.arc(hog.x - hog.size/3, hog.y - hog.size/3, hog.size/5, 0, Math.PI * 2);
+                ctx.arc(hog.x + hog.size/3, hog.y - hog.size/3, hog.size/5, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Add snout
+                ctx.fillStyle = '#FFC0CB';
+                ctx.beginPath();
+                ctx.arc(hog.x, hog.y + hog.size/3, hog.size/2.5, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Add nostrils
+                ctx.fillStyle = 'black';
+                ctx.beginPath();
+                ctx.arc(hog.x - hog.size/6, hog.y + hog.size/3, hog.size/8, 0, Math.PI * 2);
+                ctx.arc(hog.x + hog.size/6, hog.y + hog.size/3, hog.size/8, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Draw direction indicator
+                ctx.beginPath();
+                ctx.moveTo(hog.x, hog.y);
+                
+                if (hog.state === 'wander') {
+                    ctx.strokeStyle = '#FFA500'; // Orange for wandering
+                    ctx.lineTo(
+                        hog.x + Math.cos(hog.wanderAngle) * hog.size * 1.5,
+                        hog.y + Math.sin(hog.wanderAngle) * hog.size * 1.5
+                    );
+                } else if (hog.state === 'attack' && hog.targetCrop) {
+                    ctx.strokeStyle = '#FF0000'; // Red for attacking
+                    const dx = hog.targetCrop.x - hog.x;
+                    const dy = hog.targetCrop.y - hog.y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+                    ctx.lineTo(
+                        hog.x + (dx / distance) * hog.size * 1.5,
+                        hog.y + (dy / distance) * hog.size * 1.5
+                    );
+                }
+                
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                
+                // Check collision with player
+                const dx = player.x - hog.x;
+                const dy = player.y - hog.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                if (distance < player.size + hog.size) {
+                    // Player collided with hog
+                    if (keys[' '] && waterLevel > 0) {
+                        // Remove hog
+                        hogs.splice(i, 1);
+                        i--;
+                        
+                        // Show alert
+                        showAlert('Hog neutralized!');
+                    }
+                }
+            }
+            
+            // Reset underAttack flag for all crops
+            for (let i = 0; i < crops.length; i++) {
+                crops[i].underAttack = false;
+            }
+            
+            // Mark crops that are under attack
+            for (let i = 0; i < hogs.length; i++) {
+                const hog = hogs[i];
+                if (hog.state === 'attack' && hog.targetCrop) {
+                    hog.targetCrop.underAttack = true;
+                }
+            }
+        }
+        
+        // Find closest crop to a hog
+        function findClosestCrop(hog) {
+            let closestCrop = null;
+            let closestDistance = Infinity;
+            
+            for (let i = 0; i < crops.length; i++) {
+                const crop = crops[i];
+                const dx = crop.x - hog.x;
+                const dy = crop.y - hog.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                if (distance < closestDistance) {
+                    closestDistance = distance;
+                    closestCrop = crop;
+                }
+            }
+            
+            return closestCrop;
+        }
+        
+        // Update and draw player
+        function updateAndDrawPlayer() {
+            // Move player based on key presses
+            if (keys['ArrowUp'] || keys['w']) player.y -= player.speed;
+            if (keys['ArrowDown'] || keys['s']) player.y += player.speed;
+            if (keys['ArrowLeft'] || keys['a']) player.x -= player.speed;
+            if (keys['ArrowRight'] || keys['d']) player.x += player.speed;
+            
+            // Keep player on screen
+            player.x = Math.max(player.size, Math.min(canvas.width - player.size, player.x));
+            player.y = Math.max(player.size, Math.min(canvas.height - player.size, player.y));
+            
+            // Draw player (drone)
+            ctx.fillStyle = player.color;
+            ctx.beginPath();
+            ctx.arc(player.x, player.y, player.size, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Add cyan border
+            ctx.strokeStyle = '#00FFFF';
+            ctx.lineWidth = 3;
+            ctx.stroke();
+            
+            // Add drone details
+            ctx.fillStyle = '#003366';
+            ctx.beginPath();
+            ctx.arc(player.x, player.y, player.size * 0.6, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.fillStyle = '#00FFFF';
+            ctx.beginPath();
+            ctx.arc(player.x, player.y, player.size * 0.3, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Check for space bar press to water crops
+            if (keys[' '] && waterLevel > 0) {
+                // Reduce water level
+                waterLevel -= WATER_DEPLETION_RATE;
+                waterLevel = Math.max(0, waterLevel);
+                
+                // Check if near any crops
+                let nearCrop = false;
+                for (let i = 0; i < crops.length; i++) {
+                    const crop = crops[i];
+                    const dx = player.x - crop.x;
+                    const dy = player.y - crop.y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+                    
+                    if (distance < player.size + crop.size) {
+                        // Water the crop
+                        crop.irrigation += 1;
+                        
+                        // Add water droplet effect
+                        createWaterDroplets(crop.x, crop.y);
+                        
+                        nearCrop = true;
+                    }
+                }
+                
+                // Show water effect around player if not near crop
+                if (!nearCrop) {
+                    createWaterDroplets(player.x, player.y);
+                }
+            }
+        }
+        
+        // Create water droplet effect
+        function createWaterDroplets(x, y) {
+            ctx.fillStyle = 'rgba(0, 150, 255, 0.7)';
+            
+            for (let i = 0; i < 8; i++) {
+                const angle = (i / 8) * Math.PI * 2;
+                const distance = 15;
+                const dropX = x + Math.cos(angle) * distance;
+                const dropY = y + Math.sin(angle) * distance;
+                const size = 3 + Math.random() * 2;
+                
+                ctx.beginPath();
+                ctx.arc(dropX, dropY, size, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+        
+        // Check win condition
+        function checkWinCondition() {
+            // Only win if ALL crops are watered to 100%
+            if (cropsWatered >= crops.length) {
+                gameRunning = false;
+                
+                // Draw win message
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = '#4CAF50';
+                ctx.font = 'bold 48px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('VICTORY!', canvas.width / 2, canvas.height / 2 - 50);
+                
+                ctx.fillStyle = 'white';
+                ctx.font = '24px Arial';
+                ctx.fillText('All crops watered!', canvas.width / 2, canvas.height / 2);
+                ctx.fillText('Press R to restart', canvas.width / 2, canvas.height / 2 + 40);
+            }
+        }
+        
+        // Update water bar
+        function updateWaterBar() {
+            waterBar.style.width = `${waterLevel}%`;
+            
+            // Change color based on water level
+            if (waterLevel > 60) {
+                waterBar.style.background = 'linear-gradient(to right, #0077ff, #00c3ff)';
+            } else if (waterLevel > 30) {
+                waterBar.style.background = 'linear-gradient(to right, #ffaa00, #ffcc00)';
+            } else {
+                waterBar.style.background = 'linear-gradient(to right, #ff0000, #ff5500)';
+            }
+            
+            // Show alert when water is low
+            if (waterLevel <= 20 && waterLevel > 19) {
+                showAlert('Water level low! Find a tree to refill.');
+            }
+        }
+        
+        // Update debug info
+        function updateDebugInfo() {
+            let info = `Player: (${Math.round(player.x)}, ${Math.round(player.y)})\n`;
+            info += `Water: ${Math.round(waterLevel)}%\n`;
+            info += `Hogs: ${hogs.length}\n`;
+            info += `Crops Watered: ${cropsWatered}/${crops.length}\n`;
+            
+            debugInfo.textContent = info;
+            debugInfo.style.display = 'block';
+        }
+        
+        // Show alert
+        function showAlert(message) {
+            alertBox.textContent = message;
+            alertBox.classList.add('show');
+            alertTimer = 180; // 3 seconds at 60fps
+        }
+        
+        // Update alert
+        function updateAlert() {
+            if (alertTimer > 0) {
+                alertTimer--;
+                if (alertTimer === 0) {
+                    alertBox.classList.remove('show');
+                }
+            }
+        }
+        
+        // Key state
+        const keys = {};
+        
+        // Event listeners
+        window.addEventListener('keydown', function(e) {
+            keys[e.key] = true;
+            
+            // D key to toggle debug mode
+            if (e.key === 'd' || e.key === 'D') {
+                if (e.shiftKey) {
+                    debugMode = !debugMode;
+                    if (!debugMode) {
+                        debugInfo.style.display = 'none';
+                    }
+                }
+            }
+            
+            // R key to restart
+            if (e.key === 'r' || e.key === 'R') {
+                if (!gameRunning) {
+                    resetGame();
+                }
+            }
+        });
+        
+        window.addEventListener('keyup', function(e) {
+            keys[e.key] = false;
+        });
+        
+        // Reset game
+        function resetGame() {
+            score = 0;
+            cropsWatered = 0;
+            waterLevel = 100;
+            
+            init();
+        }
+        
+        // Start button event listener
+        startButton.addEventListener('click', function() {
+            startScreen.style.display = 'none';
+            init();
+        });
+    </script>
+</body>
+</html>
